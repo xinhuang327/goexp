@@ -11,10 +11,17 @@ type MyType struct {
 	unexportedField string
 }
 
+func (m MyType) MyFunc() string {
+	fmt.Println("Calling MyType.MyFunc")
+	return m.StringField
+}
+
 func Test(t *testing.T) {
 	// src := `myVar.MethodName(1,"strVal", varName)`
 	// expr := `myVar.NestField.StringField`
-	expr := `myVar.unexportedField`
+	// expr := `len(myVar.unexportedField)`
+
+	expr := `myVar.MyFunc()`
 
 	myVar := MyType{}
 	myVar.StringField = "MyStringFieldValue"

@@ -8,7 +8,10 @@ import (
 	"go/parser"
 	"go/token"
 	"reflect"
+	"strconv"
 )
+
+var Debug = false
 
 var _ = token.NewFileSet
 var _ = ast.Print
@@ -30,8 +33,9 @@ func (scope *EvaluateScope) Evaluate(expr string) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	ast.Print(fset, node)
+	if Debug {
+		ast.Print(fset, node)
+	}
 
 	result, err := scope.walk(node)
 
@@ -44,6 +48,39 @@ func (scope *EvaluateScope) walk(node ast.Expr) (interface{}, error) {
 			return nil, errors.New(fmt.Sprint("variable not found:", ident.Name))
 		}
 		return scope.Variables[ident.Name], nil
+	}
+	if lit, ok := node.(*ast.BasicLit); ok {
+		switch lit.Kind {
+		case token.STRING:
+			return lit.Value[1 : len(lit.Value)-1], nil
+		case token.INT:
+			v, err := strconv.Atoi(lit.Value)
+			return v, err
+		case token.FLOAT:
+			v, err := strconv.ParseFloat(lit.Value, 64)
+			return v, err
+		default:
+			return nil, errors.New(fmt.Sprint("unsupported BasicLit kind:", lit.Kind))
+		}
+	}
+
+	if idxExpr, ok := node.(*ast.IndexExpr); ok {
+		x, err := scope.walk(idxExpr.X)
+		if err != nil {
+			return nil, err
+		}
+		xVal := reflect.ValueOf(x)
+		i, err := scope.walk(idxExpr.Index)
+		if err != nil {
+			return nil, err
+		}
+		var indexVal reflect.Value
+		if intKey, ok := i.(int); ok {
+			indexVal = xVal.Index(intKey)
+		} else if strKey, ok := i.(string); ok {
+			indexVal = xVal.MapIndex(reflect.ValueOf(strKey))
+		}
+		return getValResult(indexVal)
 	}
 
 	if funExpr, ok := node.(*ast.CallExpr); ok {
@@ -107,19 +144,23 @@ func (scope *EvaluateScope) walk(node ast.Expr) (interface{}, error) {
 			return nil, err
 		}
 
-		if memberVal.Kind() != reflect.Func {
-			if memberVal.CanInterface() {
-				return memberVal.Interface(), nil
-			} else {
-				fmt.Println("Field", selName, "can not get interface, so return reflect.Value")
-				return memberVal, nil
-			}
-		} else {
-			return memberVal, nil // return func value
-		}
+		return getValResult(memberVal)
 	}
 
 	return nil, errors.New(fmt.Sprint("not supported node:", node))
+}
+
+func getValResult(val reflect.Value) (interface{}, error) {
+	if val.Kind() != reflect.Func {
+		if val.IsValid() && val.CanInterface() {
+			return val.Interface(), nil
+		} else {
+			fmt.Println("can not get interface, so return reflect.Value")
+			return val, nil
+		}
+	} else {
+		return val, nil // return func value
+	}
 }
 
 func getMemberVal(objVal reflect.Value, selName string) (val reflect.Value, err error) {

@@ -101,38 +101,63 @@ func (scope *EvaluateScope) walk(node ast.Expr) (interface{}, error) {
 		selName := selExpr.Sel.Name
 
 		objVal := reflect.ValueOf(obj)
-		objValKind := objVal.Kind()
 
-		var memberVal reflect.Value
-		if objValKind == reflect.Struct {
-			memberVal = objVal.FieldByName(selName)
-			if !memberVal.IsValid() {
-				memberVal = objVal.MethodByName(selName)
-			}
-		} else if objValKind == reflect.Ptr {
-			memberVal = objVal.Elem().FieldByName(selName)
-			if !memberVal.IsValid() {
-				memberVal = objVal.Elem().MethodByName(selName)
-			}
-		} else {
-			return nil, errors.New(fmt.Sprint("not supported obj kind:", objValKind))
+		memberVal, err := getMemberVal(objVal, selName)
+		if err != nil {
+			return nil, err
 		}
 
-		if memberVal.IsValid() {
-			if memberVal.Kind() != reflect.Func {
-				if memberVal.CanInterface() {
-					return memberVal.Interface(), nil
-				} else {
-					fmt.Println("Field", selName, "can not get interface, so return reflect.Value")
-					return memberVal, nil
-				}
+		if memberVal.Kind() != reflect.Func {
+			if memberVal.CanInterface() {
+				return memberVal.Interface(), nil
 			} else {
-				return memberVal, nil // return func value
+				fmt.Println("Field", selName, "can not get interface, so return reflect.Value")
+				return memberVal, nil
 			}
 		} else {
-			return nil, errors.New(fmt.Sprint("Field not valid:", selName))
+			return memberVal, nil // return func value
 		}
 	}
 
 	return nil, errors.New(fmt.Sprint("not supported node:", node))
+}
+
+func getMemberVal(objVal reflect.Value, selName string) (val reflect.Value, err error) {
+	var structVal reflect.Value
+	var ptrVal reflect.Value
+
+	objValKind := objVal.Kind()
+	switch objValKind {
+	case reflect.Struct:
+		structVal = objVal
+		if objVal.CanAddr() {
+			ptrVal = objVal.Addr()
+		}
+	case reflect.Ptr:
+		structVal = objVal.Elem()
+		ptrVal = objVal
+		if structVal.Kind() == reflect.Ptr {
+			// if it's still a ptr, dereference once again
+			ptrVal = structVal
+			structVal = structVal.Elem()
+		}
+	default:
+		err = errors.New(fmt.Sprint("not supported obj kind:", objValKind))
+		return
+	}
+
+	if val = structVal.FieldByName(selName); val.IsValid() {
+		return
+	}
+	if val = structVal.MethodByName(selName); val.IsValid() {
+		return
+	}
+	if ptrVal.IsValid() {
+		if val = ptrVal.MethodByName(selName); val.IsValid() {
+			return
+		}
+	}
+	fmt.Println("objVal", objVal, "val", val)
+	err = errors.New(fmt.Sprint("Field not valid:", selName))
+	return
 }
